@@ -1,6 +1,6 @@
 # NHS Paediatric clinical fellow job tracker
 
-Checks [NHS Jobs — Medical: Paediatrics](https://www.nhsjobs.com/job_list/Medical_and_Dental/s2/Medical_Paediatrics/d578?_srt=grade&_sd=a&_ts=1) on a schedule, filters **London** roles whose title/grade match **clinical fellow** (and common variants such as clinical teaching fellow), and sends one [ntfy](https://ntfy.sh/) notification per **new** vacancy.
+Checks the official NHS Jobs API endpoint [`/api/v1/search_xml`](https://www.jobs.nhs.uk/api/v1/search_xml) on a schedule, filters **London** roles matching **paediatric clinical fellow** criteria, and sends one [ntfy](https://ntfy.sh/) notification per **new** vacancy.
 
 State is stored in [`seen.json`](seen.json) (committed by GitHub Actions when it changes).
 
@@ -32,8 +32,6 @@ pip install -r requirements.txt
 python tracker.py
 ```
 
-Listings are fetched with **[curl_cffi](https://github.com/lwthiker/curl_cffi)** (`chrome120` TLS impersonation) because plain `requests` often receives HTTP **403** (“Site unavailable”) from nhsjobs.com.
-
 Optional environment variables:
 
 | Variable | Description |
@@ -41,9 +39,13 @@ Optional environment variables:
 | `NTFY_TOPIC` | Required. Topic name on ntfy.sh. |
 | `NTFY_SERVER` | Default `https://ntfy.sh`. |
 | `SEEN_PATH` | Path to state file (default `seen.json`). |
-| `JOB_LIST_QUERY` | Query string before `&_pg=` (default `_srt=grade&_sd=a&_ts=1`). |
 | `MAX_PAGES` | Safety cap on listing pages (default `50`). |
-| `CURL_CFFI_IMPERSONATE` | Browser profile for TLS impersonation (default `chrome120`). |
+| `API_KEYWORD` | API keyword filter (default `paediatric clinical fellow`). |
+| `API_LOCATION` | API location filter (default `London`). |
+| `API_DISTANCE` | API distance filter in miles (default `25`). |
+| `API_STAFF_GROUP` | API staff group filter (default `MEDICAL_AND_DENTAL`). |
+| `API_SORT` | API sort option (default `publicationDateDesc`). |
+| `API_LIMIT` | Results per API page, max 100 (default `100`). |
 
 The script auto-loads variables from `.env` via `python-dotenv` for local runs.
 

@@ -1,6 +1,6 @@
 """
-Fetch NHS Jobs Medical Paediatrics listings, filter London clinical fellow roles,
-notify via ntfy, persist seen vacancy IDs in seen.json.
+Fetch NHS Jobs adverts via official search XML API, filter paediatric clinical
+fellow roles in/near London, notify via ntfy, and persist seen IDs in seen.json.
 """
 
 from __future__ import annotations
@@ -9,131 +9,108 @@ import json
 import os
 import re
 import sys
-from urllib.parse import urljoin
+import xml.etree.ElementTree as ET
 
 import requests
-from curl_cffi import requests as curl_requests
 from requests.exceptions import RequestException
-from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-BASE_SITE = "https://www.nhsjobs.com"
-LIST_PATH = "/job_list/Medical_and_Dental/s2/Medical_Paediatrics/d578"
-DEFAULT_LIST_QUERY = "_srt=grade&_sd=a&_ts=1"
+SEARCH_XML_ENDPOINT = "https://www.jobs.nhs.uk/api/v1/search_xml"
 SEEN_PATH = os.environ.get("SEEN_PATH", "seen.json")
 MAX_PAGES = int(os.environ.get("MAX_PAGES", "50"))
+API_LIMIT = int(os.environ.get("API_LIMIT", "100"))
 
-# Minimal browser-like headers (some environments block python-requests otherwise).
-REQUEST_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml",
-    "Accept-Language": "en-GB,en;q=0.9",
-}
+PAEDS_PATTERN = re.compile(r"paed|paediatric|paediatrics|pediatric", re.IGNORECASE)
 
-# Matches plan intent: clinical fellow + common variants (e.g. clinical teaching fellow).
+# Matches plan intent: clinical fellow + common variants.
 FELLOW_PATTERN = re.compile(
     r"clinical\s+fellow|clinical\s+teaching\s+fellow|clinical\s+research\s+fellow|"
     r"clinical\s+education\s+fellow|junior\s+clinical\s+fellow|senior\s+clinical\s+fellow",
     re.IGNORECASE,
 )
 
-JOB_ID_PATTERN = re.compile(r"-v(\d+)(?:\?|$|&)")
-
 # Load local .env for developer runs. In CI, environment variables/secrets still take priority.
 load_dotenv()
 
 
-def list_url(page: int) -> str:
-    q = os.environ.get("JOB_LIST_QUERY", DEFAULT_LIST_QUERY)
-    parts = [f"{BASE_SITE}{LIST_PATH}?"]
-    if q.strip():
-        parts.append(q.strip())
-        parts.append("&")
-    parts.append(f"_pg={page}")
-    return "".join(parts)
+def is_london(location: str, url: str) -> bool:
+    location_text = location.lower()
+    return "london" in location_text or "/London/" in url
 
 
-def job_id_from_href(href: str) -> str | None:
-    m = JOB_ID_PATTERN.search(href)
-    return m.group(1) if m else None
+def matches_filters(title: str, description: str) -> bool:
+    haystack = f"{title} {description}"
+    # Keep paediatric matching strict to the title to avoid unrelated fellow jobs
+    # whose descriptions mention paediatric populations.
+    return bool(PAEDS_PATTERN.search(title) and FELLOW_PATTERN.search(haystack))
 
 
-def text_or_empty(node) -> str:
-    if node is None:
-        return ""
-    return node.get_text(" ", strip=True)
-
-
-def is_london(full_url: str, location: str) -> bool:
-    if "/UK/London/" in full_url:
-        return True
-    return "london" in location.lower()
-
-
-def matches_fellow_filter(title: str, grade: str) -> bool:
-    blob = f"{title} {grade}"
-    return bool(FELLOW_PATTERN.search(blob))
+def api_query(page: int) -> dict[str, str]:
+    return {
+        "keyword": os.environ.get("API_KEYWORD", "paediatric clinical fellow"),
+        "location": os.environ.get("API_LOCATION", "London"),
+        "distance": os.environ.get("API_DISTANCE", "25"),
+        "staffGroup": os.environ.get("API_STAFF_GROUP", "MEDICAL_AND_DENTAL"),
+        "sort": os.environ.get("API_SORT", "publicationDateDesc"),
+        "limit": str(API_LIMIT),
+        "page": str(page),
+    }
 
 
 def fetch_page(page: int) -> str:
-    """TLS fingerprint + headers similar to Chrome (plain urllib/requests often get 403)."""
-    url = list_url(page)
-    impersonate = os.environ.get("CURL_CFFI_IMPERSONATE", "chrome120")
-    r = curl_requests.get(
-        url,
-        impersonate=impersonate,
-        headers=REQUEST_HEADERS,
-        timeout=60,
-    )
+    r = requests.get(SEARCH_XML_ENDPOINT, params=api_query(page), timeout=60)
     r.raise_for_status()
     return r.text
 
 
-def parse_jobs(html: str) -> list[dict]:
-    soup = BeautifulSoup(html, "html.parser")
+def element_text(parent: ET.Element, name: str) -> str:
+    child = parent.find(name)
+    if child is None or child.text is None:
+        return ""
+    return child.text.strip()
+
+
+def parse_jobs(xml_text: str) -> tuple[list[dict], int]:
+    root = ET.fromstring(xml_text)
+    total_pages_text = element_text(root, "totalPages")
+    total_pages = int(total_pages_text) if total_pages_text.isdigit() else 1
     items: list[dict] = []
-    for li in soup.select("li.hj-job"):
-        a = li.find("a", href=True)
-        if not a:
-            continue
-        href = a["href"].strip()
-        if "/job/UK/" not in href:
-            continue
-        job_id = job_id_from_href(href)
+    for vacancy in root.findall("vacancyDetails"):
+        job_id = element_text(vacancy, "id")
         if not job_id:
             continue
-        title_el = li.select_one(".hj-jobtitle")
-        grade_el = li.select_one(".hj-grade")
-        employer_el = li.select_one(".hj-employername")
-        location_el = li.select_one(".hj-locationtown")
-        title = text_or_empty(title_el) or (a.get("title") or "").strip()
-        grade = text_or_empty(grade_el)
-        employer = text_or_empty(employer_el)
-        location = text_or_empty(location_el)
-        full_url = urljoin(BASE_SITE, href)
+        locations = []
+        for loc in vacancy.findall("./locations/location"):
+            if loc.text and loc.text.strip():
+                locations.append(loc.text.strip())
+        for loc in vacancy.findall("./locations/locations"):
+            if loc.text and loc.text.strip():
+                locations.append(loc.text.strip())
+        location = "; ".join(locations)
+        title = element_text(vacancy, "title")
+        description = element_text(vacancy, "description")
         items.append(
             {
                 "id": job_id,
                 "title": title,
-                "grade": grade,
-                "employer": employer,
+                "description": description,
+                "employer": element_text(vacancy, "employer"),
                 "location": location,
-                "url": full_url,
+                "url": element_text(vacancy, "url"),
             }
         )
-    return items
+    return items, total_pages
 
 
 def fetch_all_listings() -> list[dict]:
     all_rows: list[dict] = []
     seen_ids: set[str] = set()
-    for page in range(1, MAX_PAGES + 1):
-        html = fetch_page(page)
-        rows = parse_jobs(html)
+    total_pages = MAX_PAGES
+    page = 1
+    while page <= min(MAX_PAGES, total_pages):
+        xml_text = fetch_page(page)
+        rows, page_count = parse_jobs(xml_text)
+        total_pages = page_count
         if not rows:
             break
         new_on_page = 0
@@ -144,6 +121,7 @@ def fetch_all_listings() -> list[dict]:
                 new_on_page += 1
         if new_on_page == 0:
             break
+        page += 1
     return all_rows
 
 
@@ -167,9 +145,9 @@ def save_seen(path: str, ids: list[str]) -> None:
 def filter_matching(jobs: list[dict]) -> list[dict]:
     out: list[dict] = []
     for j in jobs:
-        if not matches_fellow_filter(j["title"], j["grade"]):
+        if not matches_filters(j["title"], j["description"]):
             continue
-        if not is_london(j["url"], j["location"]):
+        if not is_london(j["location"], j["url"]):
             continue
         out.append(j)
     return out
@@ -195,7 +173,7 @@ def main() -> int:
 
     try:
         jobs = fetch_all_listings()
-    except RequestException as e:
+    except (RequestException, ET.ParseError) as e:
         print(f"Failed to fetch listings: {e}", file=sys.stderr)
         return 1
 
