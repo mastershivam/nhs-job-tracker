@@ -15,6 +15,7 @@ import requests
 from curl_cffi import requests as curl_requests
 from requests.exceptions import RequestException
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 
 BASE_SITE = "https://www.nhsjobs.com"
 LIST_PATH = "/job_list/Medical_and_Dental/s2/Medical_Paediatrics/d578"
@@ -41,6 +42,9 @@ FELLOW_PATTERN = re.compile(
 )
 
 JOB_ID_PATTERN = re.compile(r"-v(\d+)(?:\?|$|&)")
+
+# Load local .env for developer runs. In CI, environment variables/secrets still take priority.
+load_dotenv()
 
 
 def list_url(page: int) -> str:

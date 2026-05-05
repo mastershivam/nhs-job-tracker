@@ -28,7 +28,7 @@ The first successful run records a **baseline** of all currently matching jobs i
 python -m venv .venv
 .venv\Scripts\activate   # Windows
 pip install -r requirements.txt
-set NTFY_TOPIC=your-topic
+# create a .env file with: NTFY_TOPIC=your-topic
 python tracker.py
 ```
 
@@ -44,6 +44,8 @@ Optional environment variables:
 | `JOB_LIST_QUERY` | Query string before `&_pg=` (default `_srt=grade&_sd=a&_ts=1`). |
 | `MAX_PAGES` | Safety cap on listing pages (default `50`). |
 | `CURL_CFFI_IMPERSONATE` | Browser profile for TLS impersonation (default `chrome120`). |
+
+The script auto-loads variables from `.env` via `python-dotenv` for local runs.
 
 ## Verification
 
