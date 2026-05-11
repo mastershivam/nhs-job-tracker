@@ -17,7 +17,6 @@ from dotenv import load_dotenv
 
 SEARCH_XML_ENDPOINT = "https://www.jobs.nhs.uk/api/v1/search_xml"
 SEEN_PATH = os.environ.get("SEEN_PATH", "seen.json")
-MAX_PAGES = int(os.environ.get("MAX_PAGES", "50"))
 API_LIMIT = int(os.environ.get("API_LIMIT", "100"))
 
 PAEDS_PATTERN = re.compile(r"paed|paediatric|paediatrics|pediatric", re.IGNORECASE)
@@ -105,9 +104,9 @@ def parse_jobs(xml_text: str) -> tuple[list[dict], int]:
 def fetch_all_listings() -> list[dict]:
     all_rows: list[dict] = []
     seen_ids: set[str] = set()
-    total_pages = MAX_PAGES
     page = 1
-    while page <= min(MAX_PAGES, total_pages):
+    total_pages = 1
+    while page <= total_pages:
         xml_text = fetch_page(page)
         rows, page_count = parse_jobs(xml_text)
         total_pages = page_count

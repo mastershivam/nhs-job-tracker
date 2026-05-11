@@ -39,7 +39,6 @@ Optional environment variables:
 | `NTFY_TOPIC` | Required. Topic name on ntfy.sh. |
 | `NTFY_SERVER` | Default `https://ntfy.sh`. |
 | `SEEN_PATH` | Path to state file (default `seen.json`). |
-| `MAX_PAGES` | Safety cap on listing pages (default `50`). |
 | `API_KEYWORD` | API keyword filter (default `paediatric clinical fellow`). |
 | `API_LOCATION` | API location filter (default `London`). |
 | `API_DISTANCE` | API distance filter in miles (default `25`). |
